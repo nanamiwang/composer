@@ -16,11 +16,37 @@ from torch import distributed
 from torch.distributed import ProcessGroup
 from torch.distributed.fsdp import (BackwardPrefetch, CPUOffload, FullyShardedDataParallel, MixedPrecision,
                                     ShardingStrategy)
-from torch.distributed.fsdp._utils import _contains_batchnorm, _override_batchnorm_mixed_precision
-from torch.distributed.fsdp.wrap import _or_policy, _wrap, _wrap_batchnorm_individually
+from torch.distributed.fsdp.wrap import _or_policy, _wrap
 
 from composer.core import Precision
 from composer.utils import dist
+
+from torch.nn.modules.batchnorm import _BatchNorm
+
+def _contains_batchnorm(module):
+    return any(isinstance(mod, _BatchNorm) for mod in module.modules())
+
+def _override_batchnorm_mixed_precision(module):
+    for mod in module.modules():
+        if isinstance(mod, _BatchNorm):
+            mod._wrap_overrides = {"mixed_precision": None}  # type: ignore[assignment]
+
+def _wrap_batchnorm_individually(
+module: nn.Module,
+    recurse: bool,
+    *args,
+    **kwargs,
+) -> bool:
+    """
+    A policy that wraps ``BatchNorm`` instances in their own FSDP instance.
+    """
+    if recurse:
+        # always recurse
+        return True
+    else:
+        # if not recursing, decide whether we should wrap based on whether it is a
+        # BN layer or not.
+        return isinstance(module, _BatchNorm)
 
 __all__ = [
     'sharding_map',
